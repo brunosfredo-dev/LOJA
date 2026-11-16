@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Kritikus Control — Administração</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <section id="login-overlay" class="gate" aria-label="Verificação de administração">
+    <div class="gate-card">
+      <div class="gate-mark">K<span>.</span></div>
+      <div class="eyebrow">KRITIKUS / RESTRICTED AREA</div>
+      <h1>Central de <em>controle.</em></h1>
+      <p class="muted">Acesso reservado à equipe autorizada. Ações sensíveis são protegidas e registradas.</p>
+      <form id="unlock-form">
+        <label for="gate-username" id="gate-user-label">Usuário administrador</label>
+        <input type="text" id="gate-username" autocomplete="username" required placeholder="seu_usuario" autocapitalize="off">
+        <label for="gate-password">Senha do administrador</label>
+        <input type="password" id="gate-password" autocomplete="current-password" required placeholder="Digite sua senha" minlength="1">
+        <div id="gate-error" class="gate-error" role="alert" hidden></div>
+        <button class="primary-btn" id="gate-submit" type="submit">Validar acesso <span>→</span></button>
+      </form>
+      <div class="gate-bottom"><span>● Conexão segura</span><a href="/">Voltar ao Kritikus ↗</a></div>
+    </div>
+  </section>
+
+  <div id="admin-app" class="shell" hidden>
+    <aside class="side">
+      <div class="brand"><div class="brand-mark">K<span>.</span></div><div><strong>KRITIKUS</strong><small>CONTROL CENTER</small></div></div>
+      <div class="side-group-title">WORKSPACE</div>
+      <nav class="side-nav" id="side-nav" aria-label="Administração">
+        <button data-view="overview" class="selected"><span class="nav-icon">◈</span> Visão geral</button>
+        <button data-view="reports"><span class="nav-icon">⚑</span> Denúncias <span class="nav-counter" id="nav-reports">0</span></button>
+        <button data-view="users"><span class="nav-icon">◎</span> Usuários</button>
+        <button data-view="posts"><span class="nav-icon">▤</span> Publicações</button>
+        <button data-view="audit"><span class="nav-icon">▥</span> Auditoria</button>
+      </nav>
+      <div class="side-footer">
+        <div class="side-identity"><span class="live-dot"></span><div><strong id="admin-username">Administrador</strong><small>Sessão validada</small></div></div>
+        <button id="lock-panel" class="side-exit">⎋ Bloquear painel</button>
+        <a href="/" class="side-exit">↗ Voltar ao site</a>
+      </div>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb">KRITIKUS <span>/</span> ADMIN <span>/</span> <span id="breadcrumb-current">OVERVIEW</span></div>
+        <div class="top-actions"><span class="secure-badge">● Operacional</span><button id="refresh" class="icon-button" title="Atualizar dados">↻</button></div>
+      </header>
+      <div class="content">
+        <div class="page-heading"><div><p class="eyebrow" id="page-eyebrow">PLATFORM INTELLIGENCE</p><h1 id="page-title">Visão geral<span class="title-period">.</span></h1><p class="muted" id="page-caption">Acompanhe a saúde da comunidade, crescimento e moderação.</p></div><span class="date-chip" id="last-update">—</span></div>
+        <div id="panel-content" aria-live="polite"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="admin-dialog" class="dialog-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <div class="dialog-card"><div class="dialog-symbol">⚑</div><h2 id="dialog-title">Confirmar ação</h2><p id="dialog-copy"></p>
+      <form id="admin-dialog-form"><label for="dialog-reason">Motivo da decisão</label><textarea id="dialog-reason" maxlength="500" minlength="5" required placeholder="Descreva o motivo para o registro de auditoria..."></textarea>
+      <div class="dialog-actions"><button type="button" id="dialog-cancel" class="ghost-btn">Cancelar</button><button type="submit" id="dialog-confirm" class="primary-btn">Confirmar</button></div></form>
+    </div>
+  </div>
+  <div id="admin-toast" class="toast" role="status" hidden></div>
+  <script src="/assets/admin.js" defer></script>
+</body>
+</html>

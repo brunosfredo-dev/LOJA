@@ -2,7 +2,8 @@
 import os
 import re
 import secrets
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 from fastapi import FastAPI, Request, Depends, HTTPException, Query, UploadFile, File
@@ -15,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import engine, get_db
 from .models import (User, Post, PostTag, Like, Save, Follow, Comment,
-                     Notification, Report, Media)
+                     Notification, Report, Media, AdminAudit)
 from .security import (normalize_username, hash_password, verify_password,
                        require_user, require_csrf, issue_session, throttle_check, throttle_fail, rate_limit)
 from .media import store_image, MAX_UPLOAD
@@ -45,6 +46,8 @@ async def response_headers(request: Request, call_next):
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    if request.url.path.startswith('/api/admin') or request.url.path == '/admin':
+        response.headers['Cache-Control'] = 'no-store'
     if IS_PROD:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return response
@@ -63,8 +66,11 @@ class PostPayload(BaseModel):
 
 class CommentPayload(BaseModel):
     text: str = Field(min_length=1, max_length=1500)
+    parent_id: int | None = Field(default=None, ge=1)
 
 class AccountPayload(BaseModel):
+    username: str | None = Field(default=None, min_length=3, max_length=35)
+    display_name: str | None = Field(default=None, max_length=60)
     bio: str | None = Field(default=None, max_length=500)
     theme: str | None = None
     current_password: str | None = None
@@ -73,10 +79,21 @@ class AccountPayload(BaseModel):
 class ReportPayload(BaseModel):
     post_id: int | None = None
     comment_id: int | None = None
+    user_id: int | None = None
     reason: str = Field(min_length=5, max_length=500)
 
 class ReviewPayload(BaseModel):
     action: str
+    reason: str = Field(default='', max_length=500)
+
+class AdminUnlockPayload(BaseModel):
+    password: str = Field(min_length=1, max_length=150)
+
+class AdminActionPayload(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+class VisibilityPayload(AdminActionPayload):
+    hidden: bool
 
 
 def who(request: Request, db: Session):
@@ -100,7 +117,7 @@ def avatar_url(user):
 
 
 def user_data(user):
-    return dict(id=user.id, username=user.username, bio=user.bio, avatar_url=avatar_url(user),
+    return dict(id=user.id, username=user.username, display_name=user.display_name, bio=user.bio, avatar_url=avatar_url(user),
                 theme=user.theme, is_admin=user.is_admin, created_at=iso(user.created_at))
 
 
@@ -109,7 +126,7 @@ def get_counts(db, posts, viewer):
     if not ids:
         return {}
     def counts(model):
-        return dict(db.execute(select(model.post_id, func.count()).where(model.post_id.in_(ids))
+        return dict(db.execute(select(model.post_id, func.count()).where(model.post_id.in_(ids), *((model.is_hidden.is_(False),) if model is Comment else ()))
                                .group_by(model.post_id)).all())
     likes, comments = counts(Like), counts(Comment)
     liked, saved, followed = set(), set(), set()
@@ -191,6 +208,10 @@ def validate_post(db, data, user):
 def homepage():
     return FileResponse(FRONTEND / 'index.html', headers={'Cache-Control': 'no-cache'})
 
+@app.get('/admin')
+def admin_page():
+    return FileResponse(FRONTEND / 'admin.html', headers={'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"})
+
 @app.get('/api/health')
 def health(db: Session = Depends(get_db)):
     db.execute(select(1))
@@ -209,6 +230,8 @@ def bootstrap(request: Request, db: Session = Depends(get_db)):
 @app.post('/api/auth/register', status_code=201)
 def register(body: Credentials, request: Request, db: Session = Depends(get_db), _=Depends(require_csrf)):
     username = normalize_username(body.username)
+    if username in ('admin','administrator','suporte','support','kritikus','moderacao'):
+        raise HTTPException(422, 'Este nome está reservado.')
     if len(body.password) < 8:
         raise HTTPException(422, 'A senha precisa ter pelo menos 8 caracteres.')
     if db.scalar(select(User.id).where(User.username == username)):
@@ -319,11 +342,11 @@ def get_post(post_id: int, request: Request, track_view: bool = True, db: Sessio
         post.views += 1
         db.commit()
     viewer = who(request, db)
-    comments = db.scalars(select(Comment).where(Comment.post_id == post_id)
+    comments = db.scalars(select(Comment).where(Comment.post_id == post_id, Comment.is_hidden.is_(False))
                           .order_by(Comment.created_at.asc(), Comment.id.asc()).limit(300)).all()
     return {'post': get_counts(db, [post], viewer)[post.id],
             'comments': [{'id': c.id, 'text': c.text, 'author': user_data(c.author),
-                          'created_at': iso(c.created_at),
+                          'created_at': iso(c.created_at), 'parent_id': c.parent_id,
                           'can_delete': bool(viewer and (viewer.id in (c.user_id, post.user_id) or viewer.is_admin))}
                          for c in comments]}
 
@@ -394,9 +417,26 @@ def create_comment(post_id: int, body: CommentPayload, request: Request, db: Ses
     if not body.text.strip():
         raise HTTPException(422, 'O comentário não pode estar vazio.')
     rate_limit(db, user.id, 'comment', 50)
-    item = Comment(post_id=post.id, user_id=user.id, text=body.text.strip())
+    parent = None
+    if body.parent_id is not None:
+        parent = db.get(Comment, body.parent_id)
+        if not parent or parent.post_id != post.id:
+            raise HTTPException(422, 'O comentário respondido não pertence a esta publicação.')
+        # Limit thread indentation to 3 levels; replies to deep messages attach to their ancestor.
+        depth = 0
+        cursor = parent
+        while cursor.parent_id and depth < 3:
+            cursor = db.get(Comment, cursor.parent_id)
+            depth += 1
+            if cursor is None:
+                break
+        if depth >= 3 and cursor:
+            parent = cursor
+    item = Comment(post_id=post.id, user_id=user.id, text=body.text.strip(), parent_id=parent.id if parent else None)
     db.add(item)
     notify(db, post.user_id, user.id, 'comment', post.id)
+    if parent and parent.user_id not in (user.id, post.user_id):
+        notify(db, parent.user_id, user.id, 'reply', post.id)
     db.commit()
     return {'id': item.id}
 
@@ -454,6 +494,19 @@ def toggle_follow(username: str, request: Request, db: Session = Depends(get_db)
 @app.patch('/api/users/me')
 def update_account(body: AccountPayload, request: Request, db: Session = Depends(get_db), _=Depends(require_csrf)):
     user = authorized(request, db)
+    if body.username is not None:
+        next_name = normalize_username(body.username)
+        if next_name != user.username:
+            if next_name in ('admin', 'administrator', 'suporte', 'support', 'kritikus', 'moderacao'):
+                raise HTTPException(422, 'Este nome está reservado.')
+            if not body.current_password or not verify_password(body.current_password, user.password_hash):
+                raise HTTPException(403, 'Digite sua senha atual para alterar o @.')
+            if db.scalar(select(User.id).where(User.username == next_name)):
+                raise HTTPException(409, 'Este @ já está em uso.')
+            rate_limit(db, user.id, 'rename', 3, 86400)
+            user.username = next_name
+    if body.display_name is not None:
+        user.display_name = body.display_name.strip()
     if body.bio is not None:
         user.bio = body.bio.strip()
     if body.theme is not None:
@@ -468,7 +521,11 @@ def update_account(body: AccountPayload, request: Request, db: Session = Depends
         user.password_hash = hash_password(body.new_password)
         user.session_version += 1
         issue_session(request, user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, 'Este @ já está em uso.')
     return {'user': user_data(user), 'csrf_token': request.session.get('csrf')}
 
 @app.post('/api/users/me/avatar')
@@ -506,48 +563,217 @@ def read_notifications(request: Request, db: Session = Depends(get_db), _=Depend
 @app.post('/api/reports', status_code=201)
 def create_report(body: ReportPayload, request: Request, db: Session = Depends(get_db), _=Depends(require_csrf)):
     user = authorized(request, db)
-    rate_limit(db, user.id, 'report', 10)
-    if bool(body.post_id) == bool(body.comment_id):
-        raise HTTPException(422, 'Informe somente um post ou comentário.')
+    targets = [body.post_id, body.comment_id, body.user_id]
+    if sum(v is not None for v in targets) != 1:
+        raise HTTPException(422, 'Escolha uma publicação, comentário ou usuário.')
+    if len(body.reason.strip()) < 5:
+        raise HTTPException(422, 'Informe pelo menos 5 caracteres no motivo.')
     if body.post_id:
-        post_or_404(db, body.post_id)
-    if body.comment_id and not db.get(Comment, body.comment_id):
-        raise HTTPException(404, 'Comentário não encontrado.')
-    db.add(Report(reporter_id=user.id, post_id=body.post_id, comment_id=body.comment_id, reason=body.reason.strip()))
+        post = post_or_404(db, body.post_id)
+        if post.user_id == user.id:
+            raise HTTPException(422, 'Você não pode denunciar sua própria publicação.')
+    if body.comment_id:
+        comment = db.get(Comment, body.comment_id)
+        if not comment or comment.is_hidden or comment.post.is_hidden:
+            raise HTTPException(404, 'Comentário não encontrado.')
+        if comment.user_id == user.id:
+            raise HTTPException(422, 'Você não pode denunciar seu comentário.')
+    if body.user_id:
+        target = db.get(User, body.user_id)
+        if not target or target.is_banned:
+            raise HTTPException(404, 'Perfil não encontrado.')
+        if target.id == user.id:
+            raise HTTPException(422, 'Você não pode denunciar seu próprio perfil.')
+    filter_target = (Report.post_id == body.post_id if body.post_id else
+                     Report.comment_id == body.comment_id if body.comment_id else Report.user_id == body.user_id)
+    previous = db.scalar(select(Report.id).where(Report.reporter_id == user.id,
+                                                Report.status == 'pending', filter_target).limit(1))
+    if previous:
+        raise HTTPException(409, 'Você já enviou uma denúncia pendente para este conteúdo.')
+    rate_limit(db, user.id, 'report', 10)
+    db.add(Report(reporter_id=user.id, post_id=body.post_id, comment_id=body.comment_id,
+                  user_id=body.user_id, reason=body.reason.strip()))
     db.commit()
     return {'ok': True}
 
+ADMIN_SESSION_SECONDS = 20 * 60
 
-def admin_only(request, db):
+def admin_role(request, db):
     user = authorized(request, db)
     if not user.is_admin:
-        raise HTTPException(403, 'Apenas moderadores.')
+        raise HTTPException(403, 'Acesso não autorizado.')
     return user
 
-@app.get('/api/admin/reports')
-def admin_reports(request: Request, db: Session = Depends(get_db)):
+def admin_only(request, db):
+    user = admin_role(request, db)
+    since = request.session.get('admin_until')
+    if not isinstance(since, int) or since <= int(time.time()):
+        raise HTTPException(403, 'Confirme sua senha em /admin para acessar a administração.')
+    return user
+
+def audit(db, admin, action, target_type, target_id, details=''):
+    db.add(AdminAudit(admin_id=admin.id, action=action, target_type=target_type,
+                      target_id=target_id, details=details[:500]))
+
+@app.get('/api/admin/session')
+def admin_session(request: Request, db: Session = Depends(get_db)):
+    user = who(request, db)
+    return {'is_admin': bool(user and user.is_admin),
+            'unlocked': bool(user and user.is_admin and
+                             isinstance(request.session.get('admin_until'), int) and
+                             request.session['admin_until'] > int(time.time())),
+            'username': user.username if user and user.is_admin else None}
+
+@app.post('/api/admin/unlock')
+def admin_unlock(body: AdminUnlockPayload, request: Request, db: Session = Depends(get_db), _=Depends(require_csrf)):
+    admin = admin_role(request, db)
+    # Persistent failure threshold per administrator, shared across service processes.
+    rate_limit(db, admin.id, 'admin_unlock', 5, 1200)
+    if not verify_password(body.password, admin.password_hash):
+        db.commit()  # Persist the failed attempt before returning the error.
+        raise HTTPException(403, 'Senha de administração incorreta.')
+    db.commit()
+    request.session['admin_until'] = int(time.time()) + ADMIN_SESSION_SECONDS
+    return {'ok': True, 'expires_in': ADMIN_SESSION_SECONDS}
+
+@app.post('/api/admin/lock')
+def admin_lock(request: Request, db: Session = Depends(get_db), _=Depends(require_csrf)):
+    admin_role(request, db)
+    request.session.pop('admin_until', None)
+    return {'ok': True}
+
+@app.get('/api/admin/summary')
+def admin_summary(request: Request, db: Session = Depends(get_db)):
     admin_only(request, db)
-    rows = db.scalars(select(Report).where(Report.status == 'pending')
-                      .order_by(Report.created_at.asc()).limit(100)).all()
-    return {'items': [{'id': r.id, 'post_id': r.post_id, 'comment_id': r.comment_id,
-                       'reason': r.reason, 'created_at': iso(r.created_at)} for r in rows]}
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=7)
+    today = now - timedelta(days=14)
+    def total(model, *filters):
+        return db.scalar(select(func.count()).select_from(model).where(*filters)) or 0
+    posts_by_day = {str(day):int(n) for day,n in db.execute(select(func.date(Post.created_at),func.count()).where(Post.created_at >= today)
+                                   .group_by(func.date(Post.created_at))).all()}
+    users_by_day = {str(day):int(n) for day,n in db.execute(select(func.date(User.created_at),func.count()).where(User.created_at >= today)
+                                   .group_by(func.date(User.created_at))).all()}
+    points = []
+    for offset in range(13,-1,-1):
+        key=(now-timedelta(days=offset)).date().isoformat()
+        points.append({'date': key, 'posts': int(posts_by_day.get(key,0)), 'users': int(users_by_day.get(key,0))})
+    return {'metrics':{'users':total(User), 'new_users_7d':total(User,User.created_at >= since),
+        'active_users_7d':total(User, User.id.in_(select(Post.user_id).where(Post.created_at >= since).union(
+            select(Comment.user_id).where(Comment.created_at >= since)))),
+        'banned_users':total(User,User.is_banned.is_(True)),
+        'posts':total(Post), 'visible_posts':total(Post,Post.is_hidden.is_(False)),
+        'new_posts_7d':total(Post, Post.created_at >= since), 'comments':total(Comment),
+        'reports_pending':total(Report,Report.status == 'pending'),
+        'reports_total':total(Report), 'likes':total(Like),
+        'total_views':db.scalar(select(func.coalesce(func.sum(Post.views),0))) or 0,
+        'media_count':total(Media),
+        'media_bytes':db.scalar(select(func.coalesce(func.sum(Media.size_bytes),0))) or 0},
+        'trend':points, 'database':'connected', 'checked_at':iso(now)}
+
+@app.get('/api/admin/reports')
+def admin_reports(request: Request, db: Session = Depends(get_db),
+                  status: str = Query('pending', pattern='^(pending|resolved|dismissed|all)$'),
+                  page: int = Query(1, ge=1)):
+    admin_only(request, db)
+    stmt=select(Report)
+    if status!='all': stmt=stmt.where(Report.status == status)
+    rows=db.scalars(stmt.order_by(Report.created_at.desc(), Report.id.desc())
+                    .limit(50).offset((page-1)*50)).all()
+    reporter_ids={r.reporter_id for r in rows}
+    names=dict(db.execute(select(User.id,User.username).where(User.id.in_(reporter_ids))).all()) if reporter_ids else {}
+    return {'items':[{'id':r.id,'post_id':r.post_id,'comment_id':r.comment_id,'user_id':r.user_id,
+           'reason':r.reason,'status':r.status,'reporter':names.get(r.reporter_id,'[excluído]'),
+           'created_at':iso(r.created_at)} for r in rows],
+           'page':page, 'has_more':len(rows)==50}
 
 @app.post('/api/admin/reports/{report_id}')
 def review_report(report_id: int, body: ReviewPayload, request: Request,
                   db: Session = Depends(get_db), _=Depends(require_csrf)):
-    admin_only(request, db)
-    report = db.get(Report, report_id)
+    admin=admin_only(request, db)
+    report=db.get(Report, report_id)
     if not report:
         raise HTTPException(404, 'Denúncia não encontrada.')
-    if body.action not in ('dismiss', 'hide'):
+    if report.status != 'pending':
+        raise HTTPException(409, 'Esta denúncia já foi analisada.')
+    if body.action not in ('dismiss','hide','resolve'):
         raise HTTPException(422, 'Ação inválida.')
-    if body.action == 'hide':
+    if body.action=='hide':
+        if report.user_id:
+            raise HTTPException(422, 'Para denúncias de perfil, use o controle de suspender usuário.')
         if report.post_id:
-            post = db.get(Post, report.post_id)
-            if post: post.is_hidden = True
+            post=db.get(Post,report.post_id)
+            if post: post.is_hidden=True
         if report.comment_id:
-            comment = db.get(Comment, report.comment_id)
-            if comment: db.delete(comment)
-    report.status = 'resolved' if body.action == 'hide' else 'dismissed'
+            comment=db.get(Comment,report.comment_id)
+            if comment: comment.is_hidden=True
+    report.status='dismissed' if body.action=='dismiss' else 'resolved'
+    audit(db,admin,'review_'+body.action,'report',report.id,body.reason or report.reason)
     db.commit()
-    return {'ok': True}
+    return {'ok':True}
+
+@app.get('/api/admin/users')
+def admin_users(request: Request, db: Session = Depends(get_db),
+                q: str = Query('',max_length=100), page: int = Query(1,ge=1)):
+    admin_only(request,db)
+    stmt=select(User)
+    if q.strip(): stmt=stmt.where(or_(User.username.ilike('%'+q.strip()+'%'), User.display_name.ilike('%'+q.strip()+'%')))
+    users=db.scalars(stmt.order_by(User.created_at.desc(),User.id.desc()).limit(50).offset((page-1)*50)).all()
+    return {'items':[{'id':u.id,'username':u.username,'display_name':u.display_name,'is_admin':u.is_admin,
+                      'is_banned':u.is_banned,'created_at':iso(u.created_at)} for u in users],
+            'has_more':len(users)==50}
+
+@app.post('/api/admin/users/{user_id}/ban')
+def admin_ban(user_id:int,body:AdminActionPayload,request:Request,db:Session=Depends(get_db),_=Depends(require_csrf)):
+    admin=admin_only(request,db)
+    target=db.get(User,user_id)
+    if not target: raise HTTPException(404,'Usuário não encontrado.')
+    if target.is_admin: raise HTTPException(403,'Não é permitido suspender uma conta administrativa.')
+    if target.is_banned: raise HTTPException(409,'Conta já suspensa.')
+    target.is_banned=True
+    target.session_version+=1
+    audit(db,admin,'ban','user',user_id,body.reason)
+    db.commit()
+    return {'ok':True}
+
+@app.post('/api/admin/users/{user_id}/unban')
+def admin_unban(user_id:int,body:AdminActionPayload,request:Request,db:Session=Depends(get_db),_=Depends(require_csrf)):
+    admin=admin_only(request,db)
+    target=db.get(User,user_id)
+    if not target: raise HTTPException(404,'Usuário não encontrado.')
+    if not target.is_banned: raise HTTPException(409,'Conta não está suspensa.')
+    target.is_banned=False
+    audit(db,admin,'unban','user',user_id,body.reason)
+    db.commit()
+    return {'ok':True}
+
+@app.get('/api/admin/posts')
+def admin_posts(request:Request,db:Session=Depends(get_db),
+                q:str=Query('',max_length=100),page:int=Query(1,ge=1)):
+    admin_only(request,db)
+    stmt=select(Post)
+    if q.strip(): stmt=stmt.where(or_(Post.title.ilike('%'+q.strip()+'%'),Post.description.ilike('%'+q.strip()+'%')))
+    posts=db.scalars(stmt.order_by(Post.created_at.desc(),Post.id.desc()).limit(50).offset((page-1)*50)).all()
+    return {'items':[{'id':p.id,'title':p.title,'author':p.author.username,'kind':p.kind,
+                      'is_hidden':p.is_hidden,'views':p.views,'created_at':iso(p.created_at)} for p in posts],
+            'has_more':len(posts)==50}
+
+@app.post('/api/admin/posts/{post_id}/visibility')
+def admin_visibility(post_id:int,body:VisibilityPayload,request:Request,db:Session=Depends(get_db),_=Depends(require_csrf)):
+    admin=admin_only(request,db)
+    post=db.get(Post,post_id)
+    if not post: raise HTTPException(404,'Publicação não encontrada.')
+    post.is_hidden=body.hidden
+    audit(db,admin,'hide_post' if body.hidden else 'restore_post','post',post_id,body.reason)
+    db.commit()
+    return {'ok':True}
+
+@app.get('/api/admin/audit')
+def admin_audit(request:Request,db:Session=Depends(get_db),page:int=Query(1,ge=1)):
+    admin_only(request,db)
+    rows=db.scalars(select(AdminAudit).order_by(AdminAudit.created_at.desc(),AdminAudit.id.desc())
+                    .limit(50).offset((page-1)*50)).all()
+    return {'items':[{'id':r.id,'admin':r.admin.username if r.admin else '[excluído]',
+                      'action':r.action,'target_type':r.target_type,'target_id':r.target_id,
+                      'details':r.details,'created_at':iso(r.created_at)} for r in rows],
+            'has_more':len(rows)==50}

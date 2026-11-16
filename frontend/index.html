@@ -25,7 +25,6 @@
             <li><a href="#" data-menu="ajuda"><i class="fas fa-question-circle"></i> Ajuda & Regras</a></li>
             <hr>
             <li><a href="#" data-menu="sair" class="texto-sair"><i class="fas fa-sign-out-alt"></i> Sair</a></li>
-            <li id="menu-admin" style="display:none"><a href="#" data-menu="moderacao"><i class="fas fa-shield-alt"></i> Moderação</a></li>
         </ul>
     </aside>
 
@@ -84,7 +83,8 @@
                 </div>
                 <input type="file" id="entrada-foto-perfil" accept="image/*" style="display: none;" onchange="salvarFotoPerfil(event)">
                 
-                <h2 id="nome-usuario-perfil">@usuario</h2>
+                <h2 id="nome-completo-perfil"></h2>
+                <p id="nome-usuario-perfil">@usuario</p>
                 
                 <div class="estatisticas-perfil">
                     <span id="seguidores-perfil"><strong>0</strong> Seguidores</span>
@@ -105,6 +105,21 @@
         <section id="container-pagina" class="pagina-interna" style="display:none"></section>
     </main>
     <div id="toast" role="status" aria-live="polite"></div>
+    <div id="dialogo-app" class="modal dialogo-aplicativo" role="dialog" aria-modal="true" aria-labelledby="dialogo-titulo" style="display:none">
+      <div class="dialogo-card">
+        <div class="dialogo-icone" id="dialogo-icone"><i class="fas fa-shield-alt"></i></div>
+        <h2 id="dialogo-titulo">Confirmar ação</h2>
+        <p id="dialogo-mensagem"></p>
+        <form id="dialogo-form">
+          <label for="dialogo-motivo" id="dialogo-rotulo" style="display:none">Motivo</label>
+          <textarea id="dialogo-motivo" maxlength="500" rows="4" placeholder="Descreva o motivo..." style="display:none"></textarea>
+          <div class="dialogo-botoes">
+            <button type="button" class="acao-secundaria" id="dialogo-cancelar">Cancelar</button>
+            <button type="submit" class="btn-criar" id="dialogo-confirmar">Confirmar</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div id="modal-detalhes" class="modal" role="dialog" aria-modal="true" aria-label="Detalhes da publicação">
         <div class="conteudo-modal">

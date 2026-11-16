@@ -47,7 +47,6 @@ function atualizarInterfaceUsuario() {
   $('btn-entrar').style.display=logged?'none':'inline-block';
   $('btn-cadastrar').style.display=logged?'none':'inline-block';
   $('icone-perfil-id').style.display=logged?'flex':'none';
-  $('menu-admin').style.display=logged&&state.user.is_admin?'list-item':'none';
   const pic=safeImage(state.user?.avatar_url);
   $('img-perfil-nav').style.display=pic?'block':'none';
   $('icone-perfil-padrao-nav').style.display=pic?'none':'inline-block';
@@ -170,10 +169,44 @@ function mostrarInicio(){ fecharModal();fecharModaisAutenticacao();fecharModalCr
 async function openModalById(id){
   const data=await executar(()=>api('/posts/'+Number(id)));if(!data)return;
   state.opened=data.post; renderDetalhes(data.post,data.comments);
-  $('modal-detalhes').style.display='block';document.body.style.overflow='hidden';
+  cancelarResposta();$('modal-detalhes').style.display='block';document.body.style.overflow='hidden';
   history.replaceState(null,'','#post-'+id);
 }
 function openModal(item){ return openModalById(item.id); }
+function comentariosHTML(comments) {
+  const children=new Map(), roots=[];
+  const indexed=new Map(comments.map(c=>[c.id,c]));
+  for (const comment of comments) {
+    if (comment.parent_id && indexed.has(comment.parent_id) && comment.parent_id!==comment.id) {
+      if(!children.has(comment.parent_id))children.set(comment.parent_id,[]);
+      children.get(comment.parent_id).push(comment);
+    } else roots.push(comment);
+  }
+  const seen=new Set();
+  function render(c,level=0) {
+    if(seen.has(c.id))return '';seen.add(c.id);
+    const canReport=state.user && state.user.id!==c.author.id;
+    return `<div class="item-comentario thread-level-${Math.min(level,3)}" id="comentario-${c.id}">
+      <div class="thread-avatar">${handle((c.author.display_name||c.author.username).slice(0,1).toUpperCase())}</div>
+      <div class="thread-body"><div class="thread-top"><button class="thread-author autor-clicavel" data-action="perfil" data-username="${handle(c.author.username)}">${handle(c.author.display_name||'@'+c.author.username)}</button>
+      <span class="thread-handle">@${handle(c.author.username)}</span><span class="thread-date">${new Date(c.created_at).toLocaleDateString('pt-BR')}</span></div>
+      <p class="thread-text">${handle(c.text)}</p>
+      <div class="thread-actions">${state.user?`<button type="button" data-action="responder-comentario" data-id="${c.id}" data-username="${handle(c.author.username)}"><i class="fas fa-reply"></i> Responder</button>`:''}
+      ${canReport?`<button type="button" data-action="denunciar-comentario" data-id="${c.id}">Denunciar</button>`:''}
+      ${c.can_delete?`<button type="button" data-action="excluir-comentario" data-id="${c.id}" class="thread-danger">Excluir</button>`:''}</div>
+      <div class="thread-children">${(children.get(c.id)||[]).map(x=>render(x,level+1)).join('')}</div></div></div>`;
+  }
+  return roots.map(x=>render(x)).join('');
+}
+let replyToComment=null;
+function cancelarResposta(){ replyToComment=null; const target=$('respondendo-a');if(target)target.style.display='none'; }
+function responderComentario(id,username){
+  if(!precisaLogin())return;
+  replyToComment=id;
+  const bar=$('respondendo-a');
+  if(bar){bar.style.display='flex';bar.querySelector('span').textContent='Respondendo a @'+username;}
+  $('entrada-comentario')?.focus();
+}
 function renderDetalhes(post, comments) {
   const isOwner=state.user?.id===post.author.id, isAdmin=!!state.user?.is_admin;
   $('conteudo-corpo-modal').innerHTML=`
@@ -192,16 +225,17 @@ function renderDetalhes(post, comments) {
       <div class="etiquetas-modal">${post.tags.map(t=>`<span class="etiqueta-modal">${handle(t)}</span>`).join('')}</div>
       <div class="acoes-extras">${isOwner||isAdmin?`<button class="acao-secundaria" data-action="editar" data-id="${post.id}">Editar</button><button class="acao-perigosa" data-action="excluir-post" data-id="${post.id}">Excluir</button>`:''}
       ${!isOwner&&state.user?`<button class="acao-secundaria" data-action="denunciar-post" data-id="${post.id}"><i class="fas fa-flag"></i> Denunciar publicação</button>`:''}</div>
-      <section class="secao-comentarios"><h3>Comentários (${comments.length})</h3>
-        <form id="form-comentario" class="caixa-adicionar-comentario"><input id="entrada-comentario" required maxlength="1500" placeholder="${state.user?'Escreva um comentário...':'Entre na sua conta para comentar'}" ${state.user?'':'disabled'}>
-          <button class="btn-criar" type="submit" ${state.user?'':'disabled'}><i class="fas fa-paper-plane"></i></button></form>
-        <div id="lista-comentarios">${comments.length?comments.map(c=>`<div class="item-comentario"><div class="autor-comentario-falso autor-clicavel" data-action="perfil" data-username="${handle(c.author.username)}">@${handle(c.author.username)}</div><div class="texto-comentario-falso" style="white-space:pre-wrap">${handle(c.text)}</div>
-          ${c.can_delete?`<button class="btn-excluir-comentario" data-action="excluir-comentario" data-id="${c.id}" aria-label="Excluir comentário"><i class="fas fa-times"></i></button>`:''}
-          ${state.user&&!c.can_delete?`<button class="acao-secundaria" style="margin:8px 0" data-action="denunciar-comentario" data-id="${c.id}">Denunciar</button>`:''}</div>`).join(''):'<p class="subtexto">Nenhum comentário ainda.</p>'}</div>
+      <section class="secao-comentarios"><h3>Conversa (${comments.length})</h3>
+        <form id="form-comentario" class="caixa-adicionar-comentario thread-compose">
+          <div id="respondendo-a" class="reply-indicator" style="display:none"><span></span><button type="button" data-action="cancelar-resposta" aria-label="Cancelar resposta">&times;</button></div>
+          <div class="thread-compose-row"><input id="entrada-comentario" required maxlength="1500" placeholder="${state.user?'Participe da conversa...':'Entre na sua conta para comentar'}" ${state.user?'':'disabled'}>
+          <button class="btn-criar" type="submit" ${state.user?'':'disabled'}><i class="fas fa-paper-plane"></i> Enviar</button></div>
+        </form>
+        <div id="lista-comentarios">${comments.length?comentariosHTML(comments):'<p class="subtexto">Comece a conversa.</p>'}</div>
       </section>
     </div>`;
 }
-async function atualizarModal(){ if(state.opened) {const d=await api('/posts/'+state.opened.id+'?track_view=false'); state.opened=d.post;renderDetalhes(d.post,d.comments);} }
+async function atualizarModal(){ if(state.opened) {const d=await api('/posts/'+state.opened.id+'?track_view=false'); state.opened=d.post;renderDetalhes(d.post,d.comments);cancelarResposta();} }
 async function atualizarVisao(){
   if(state.view==='feed')await carregarFeed();
   if(state.view==='perfil')await carregarPerfilPosts();
@@ -216,18 +250,55 @@ async function toggleFollowUser(username){ if(!precisaLogin('Entre para seguir p
     await atualizarModal();}); }
 async function adicionarComentario(e){ e.preventDefault();if(!precisaLogin()||!state.opened)return;
   const text=$('entrada-comentario').value.trim();if(!text)return;
-  await executar(async()=>{await api(`/posts/${state.opened.id}/comments`,{method:'POST',body:{text}});
+  await executar(async()=>{await api(`/posts/${state.opened.id}/comments`,{method:'POST',body:{text,parent_id:replyToComment}});
     await atualizarModal();await atualizarVisao();});
 }
-async function deletarComentario(id){ if(!confirm('Excluir este comentário?'))return;
-  await executar(async()=>{await api(`/comments/${id}`,{method:'DELETE'});await atualizarModal();await atualizarVisao();}); }
-async function deletarPost(id){if(!confirm('Excluir essa publicação permanentemente?'))return;
-  await executar(async()=>{await api(`/posts/${id}`,{method:'DELETE'});fecharModal();aviso('Publicação excluída.');await atualizarVisao();}); }
-async function denunciar(post_id=null,comment_id=null){if(!precisaLogin())return;
-  const reason=prompt('Qual é o motivo da denúncia? (mínimo 5 caracteres)');if(reason===null)return;
-  if(reason.trim().length<5)return aviso('Escreva um motivo com pelo menos 5 caracteres.',true);
-  await executar(async()=>{await api('/reports',{method:'POST',body:{post_id,comment_id,reason:reason.trim()}});
-    aviso('Denúncia enviada para moderação.');});
+// Custom modal replaces browser prompt()/confirm() and restores keyboard focus.
+let dialogResolve=null, dialogFocus=null;
+function fecharDialogo(result=null) {
+  if(!$('dialogo-app') || $('dialogo-app').style.display!=='block')return;
+  $('dialogo-app').style.display='none';
+  $('dialogo-form').reset();
+  const resolver=dialogResolve; dialogResolve=null;
+  if(dialogFocus?.isConnected) dialogFocus.focus();
+  liberarScroll();
+  resolver?.(result);
+}
+function dialogo({title,message,reason=false,danger=false,confirmText='Confirmar'}={}) {
+  if(dialogResolve) fecharDialogo(null);
+  dialogFocus=document.activeElement;
+  $('dialogo-titulo').textContent=title||'Confirmar ação';
+  $('dialogo-mensagem').textContent=message||'';
+  $('dialogo-motivo').style.display=reason?'block':'none';
+  $('dialogo-rotulo').style.display=reason?'block':'none';
+  $('dialogo-motivo').required=reason;
+  $('dialogo-motivo').minLength=reason?5:0;
+  $('dialogo-confirmar').textContent=confirmText;
+  $('dialogo-confirmar').classList.toggle('danger-solid',danger);
+  $('dialogo-app').style.display='block';document.body.style.overflow='hidden';
+  setTimeout(()=>(reason?$('dialogo-motivo'):$('dialogo-cancelar')).focus(),0);
+  return new Promise(resolve=>dialogResolve=resolve);
+}
+$('dialogo-cancelar').addEventListener('click',()=>fecharDialogo(null));
+$('dialogo-form').addEventListener('submit',e=>{
+  e.preventDefault();
+  if($('dialogo-motivo').required && $('dialogo-motivo').value.trim().length<5){aviso('Informe pelo menos 5 caracteres.',true);return;}
+  fecharDialogo($('dialogo-motivo').required?$('dialogo-motivo').value.trim():true);
+});
+async function deletarComentario(id) {
+  if(!await dialogo({title:'Excluir comentário?',message:'Esta ação removerá o comentário do site.',danger:true,confirmText:'Excluir comentário'}))return;
+  await executar(async()=>{await api(`/comments/${id}`,{method:'DELETE'});await atualizarModal();await atualizarVisao();});
+}
+async function deletarPost(id) {
+  if(!await dialogo({title:'Excluir publicação?',message:'Você não poderá recuperar esta publicação depois.',danger:true,confirmText:'Excluir definitivamente'}))return;
+  await executar(async()=>{await api(`/posts/${id}`,{method:'DELETE'});fecharModal();aviso('Publicação excluída.');await atualizarVisao();});
+}
+async function denunciar(post_id=null,comment_id=null,user_id=null) {
+  if(!precisaLogin())return;
+  const reason=await dialogo({title:'Enviar denúncia',message:'Nossa equipe avaliará a situação. Explique o que viola as regras da comunidade.',reason:true,confirmText:'Enviar denúncia'});
+  if(!reason)return;
+  await executar(async()=>{await api('/reports',{method:'POST',body:{post_id,comment_id,user_id,reason}});
+    aviso('Sua denúncia foi enviada à moderação.');});
 }
 async function mostrarPerfil(username=null){
   const target=(username || state.user?.username || '').replace(/^@/,'');
@@ -237,6 +308,7 @@ async function mostrarPerfil(username=null){
   if(!profile)return;
   mostrarArea('perfil'); state.profileTab='posts';state.profilePage=1;
   $('nome-usuario-perfil').textContent='@'+profile.user.username;
+  $('nome-completo-perfil').textContent=profile.user.display_name||profile.user.username;
   $('seguidores-perfil').innerHTML=`<strong>${profile.followers_count}</strong> Seguidores`;
   $('seguindo-perfil').innerHTML=`<strong>${profile.following_count}</strong> Seguindo`;
   const pic=safeImage(profile.user.avatar_url);
@@ -249,7 +321,7 @@ async function mostrarPerfil(username=null){
   $('sobreposicao-editar-avatar').style.display=own?'flex':'none';
   action.innerHTML=`<p class="perfil-bio">${handle(profile.user.bio||'Nenhuma biografia ainda.')}</p>`+
     (own?`<button class="btn-entrar" data-action="configuracoes">Editar perfil</button>`:
-       `<button class="btn-seguir ${profile.following?'seguindo':''}" data-action="seguir" data-username="${handle(target)}"><i class="fas ${profile.following?'fa-check':'fa-plus'}"></i> ${profile.following?'Seguindo':'Seguir'}</button>`);
+       `<div class="profile-actions"><button class="btn-seguir ${profile.following?'seguindo':''}" data-action="seguir" data-username="${handle(target)}"><i class="fas ${profile.following?'fa-check':'fa-plus'}"></i> ${profile.following?'Seguindo':'Seguir'}</button>${state.user?`<button class="acao-secundaria" data-action="denunciar-usuario" data-id="${profile.user.id}"><i class="fas fa-flag"></i> Denunciar perfil</button>`:''}</div>`);
   $('aba-salvos').style.display=own?'inline-block':'none';
   $('aba-minhas-publicacoes').textContent=own?'Minhas Publicações':'Publicações de @'+target;
   $('aba-minhas-publicacoes').classList.add('ativo');$('aba-salvos').classList.remove('ativo');
@@ -324,7 +396,7 @@ function pagina(title, content){ fecharModal();mostrarArea('pagina');$('containe
 async function mostrarSalvos(){if(!precisaLogin())return;await mostrarPerfil(state.user.username);await trocarAbaPerfil('saved');}
 async function mostrarNotificacoes(){if(!precisaLogin())return;
   const d=await executar(()=>api('/notifications'));if(!d)return;
-  const tipo={follow:'começou a seguir você.',like:'curtiu sua publicação.',comment:'comentou sua publicação.'};
+  const tipo={follow:'começou a seguir você.',like:'curtiu sua publicação.',comment:'comentou sua publicação.',reply:'respondeu ao seu comentário.'};
   pagina('Notificações',`<div class="painel"><div class="card-painel-btn"><button class="btn-entrar" data-action="ler-notificacoes">Marcar todas como lidas</button></div>
   ${d.items.length?d.items.map(n=>`<div class="lista-notificacao ${n.is_read?'':'nao-lida'}"><button ${n.post_id?`data-action="abrir-post" data-id="${n.post_id}"`:''}>
   <strong>@${handle(n.actor)}</strong> ${handle(tipo[n.kind]||'interagiu com você.')}<div class="subtexto">${new Date(n.created_at).toLocaleString('pt-BR')}</div></button>
@@ -342,24 +414,22 @@ function mostrarAjuda(){
   </div>`);
 }
 function mostrarConfiguracoes(){if(!precisaLogin())return;
-  pagina('Configurações de conta',`<div class="painel"><h3>Meu perfil</h3><p>Seu usuário: @${handle(state.user.username)}</p>
-    <form id="form-configuracoes"><label for="bio-config">Biografia</label><textarea id="bio-config" maxlength="500" rows="3">${handle(state.user.bio)}</textarea>
+  pagina('Editar meu perfil',`<div class="painel"><h3>Identidade e apresentação</h3><p>Personalize como outras pessoas encontram seu perfil.</p>
+    <form id="form-configuracoes">
+      <label for="nome-config">Nome de exibição</label><input id="nome-config" maxlength="60" value="${handle(state.user.display_name||'')}" placeholder="Como você quer ser chamado">
+      <label for="usuario-config">Nome de usuário (@)</label><input id="usuario-config" minlength="3" maxlength="24" pattern="[a-z0-9_]{3,24}" required value="${handle(state.user.username)}" autocapitalize="off" spellcheck="false"><p class="subtexto">Use letras minúsculas, números e _. Para mudar seu @, confirme sua senha atual. Limite: três alterações por dia.</p>
+      <label for="bio-config">Biografia</label><textarea id="bio-config" maxlength="500" rows="3">${handle(state.user.bio)}</textarea>
       <label for="tema-config">Aparência</label><select id="tema-config"><option value="dark" ${state.user.theme==='dark'?'selected':''}>Escuro</option><option value="light" ${state.user.theme==='light'?'selected':''}>Claro</option></select>
-      <button class="btn-criar" type="submit">Salvar configurações</button></form></div>
-    <div class="painel"><h3>Segurança</h3><form id="form-senha"><label>Senha atual</label><input type="password" id="senha-antiga" autocomplete="current-password" required>
+      <label for="senha-confirmacao-config">Senha atual (somente para mudar o @)</label><input type="password" id="senha-confirmacao-config" autocomplete="current-password" placeholder="Obrigatória se mudar o @">
+      <button class="btn-criar" type="submit">Salvar alterações no perfil</button></form></div>
+    <div class="painel"><h3>Segurança da conta</h3><form id="form-senha"><label>Senha atual</label><input type="password" id="senha-antiga" autocomplete="current-password" required>
       <label>Nova senha (mínimo 8 caracteres)</label><input type="password" id="senha-nova" autocomplete="new-password" minlength="8" required>
-      <button type="submit" class="btn-entrar">Alterar senha</button></form></div>`);
+      <button type="submit" class="btn-entrar">Alterar senha</button></form></div>
+    <div class="painel"><h3>Sessão</h3><p>Deseja encerrar seu acesso neste aparelho?</p><button class="acao-perigosa" data-action="sair-conta">Sair da conta</button></div>`);
 }
 async function mudarTema(){if(!precisaLogin())return;
   await executar(async()=>{const d=await api('/users/me',{method:'PATCH',body:{theme:state.user.theme==='dark'?'light':'dark'}});
     state.user=d.user;state.csrf=d.csrf_token;atualizarInterfaceUsuario();aviso('Tema atualizado.');});}
-async function mostrarModeracao(){if(!state.user?.is_admin)return aviso('Acesso restrito.',true);
-  const d=await executar(()=>api('/admin/reports'));if(!d)return;
-  pagina('Moderação · Denúncias pendentes',`<div class="painel">${d.items.length?d.items.map(r=>`<div class="lista-notificacao"><div>
-    <strong>Denúncia #${r.id}</strong><div>${handle(r.reason)}</div><div class="subtexto">${r.post_id?'Publicação #'+r.post_id:'Comentário #'+r.comment_id}</div>
-    </div><div class="card-painel-btn"><button class="acao-secundaria" data-action="moderar" data-id="${r.id}" data-review="dismiss">Ignorar</button>
-    <button class="acao-perigosa" data-action="moderar" data-id="${r.id}" data-review="hide">Remover conteúdo</button></div></div>`).join(''):'<p>Não há denúncias pendentes.</p>'}</div>`);
-}
 async function handleSidebar(action){fecharMenuLateral();
   if(action==='perfil')return mostrarPerfil();
   if(action==='salvos')return mostrarSalvos();
@@ -367,7 +437,6 @@ async function handleSidebar(action){fecharMenuLateral();
   if(action==='tema')return mudarTema();
   if(action==='configuracoes')return mostrarConfiguracoes();
   if(action==='ajuda')return mostrarAjuda();
-  if(action==='moderacao')return mostrarModeracao();
   if(action==='sair')return logout();
 }
 // Single event router: dynamic content never inserts executable user strings in inline handlers.
@@ -389,20 +458,24 @@ document.addEventListener('click',async e=>{
     case 'excluir-comentario':await deletarComentario(id);break;
     case 'denunciar-post':await denunciar(id);break;
     case 'denunciar-comentario':await denunciar(null,id);break;
+    case 'denunciar-usuario':await denunciar(null,null,id);break;
+    case 'responder-comentario':responderComentario(id,name);break;
+    case 'cancelar-resposta':cancelarResposta();break;
+    case 'sair-conta':if(await dialogo({title:'Sair da conta?',message:'Você poderá entrar novamente usando seu usuário e senha.',confirmText:'Sair'}))await logout();break;
     case 'foco-comentario':$('entrada-comentario')?.focus();break;
     case 'filtro':filterByTag(el.dataset.tag,el);break;
     case 'mais-feed':state.page++;await executar(()=>carregarFeed(true));break;
     case 'mais-perfil':state.profilePage++;await executar(()=>carregarPerfilPosts(true));break;
     case 'configuracoes':mostrarConfiguracoes();break;
     case 'ler-notificacoes':await executar(async()=>{await api('/notifications/read',{method:'POST'});atualizarBadge(0);await mostrarNotificacoes();});break;
-    case 'moderar':if(confirm('Confirmar ação de moderação?'))await executar(async()=>{await api('/admin/reports/'+id,{method:'POST',body:{action:el.dataset.review}});await mostrarModeracao();});break;
+    case 'moderar':aviso('A moderação agora fica no endereço /admin.');break;
   }
 });
 document.addEventListener('submit',async e=>{
   if(e.target.id==='form-comentario')return adicionarComentario(e);
   if(e.target.id==='form-configuracoes'){
-    e.preventDefault();await executar(async()=>{const d=await api('/users/me',{method:'PATCH',body:{bio:$('bio-config').value,theme:$('tema-config').value}});
-      state.user=d.user;state.csrf=d.csrf_token;atualizarInterfaceUsuario();aviso('Configurações salvas.');});
+    e.preventDefault();await executar(async()=>{const d=await api('/users/me',{method:'PATCH',body:{username:$('usuario-config').value,display_name:$('nome-config').value,bio:$('bio-config').value,theme:$('tema-config').value,current_password:$('senha-confirmacao-config').value||null}});
+      state.user=d.user;state.csrf=d.csrf_token;atualizarInterfaceUsuario();aviso('Perfil atualizado com sucesso.');mostrarConfiguracoes();});
   }
   if(e.target.id==='form-senha'){
     e.preventDefault();await executar(async()=>{const d=await api('/users/me',{method:'PATCH',body:{current_password:$('senha-antiga').value,new_password:$('senha-nova').value}});
@@ -410,13 +483,14 @@ document.addEventListener('submit',async e=>{
   }
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){fecharModal();fecharModalCriar();fecharModaisAutenticacao();fecharMenuLateral();}
+  if(e.key==='Escape'){if(dialogResolve){fecharDialogo(null);return;}fecharModal();fecharModalCriar();fecharModaisAutenticacao();fecharMenuLateral();}
   if((e.key==='Enter'||e.key===' ')&&e.target.matches('.cartao[data-action="abrir-post"]')){e.preventDefault();openModalById(e.target.dataset.id);}
 });
 window.addEventListener('click',e=>{
   if(e.target===$('modal-detalhes'))fecharModal();
   if(e.target===$('modal-criar'))fecharModalCriar();
   if(e.target===$('modal-entrar')||e.target===$('modal-cadastrar'))fecharModaisAutenticacao();
+  if(e.target===$('dialogo-app'))fecharDialogo(null);
 });
 $('entrada-pesquisa').addEventListener('input',e=>{
   clearTimeout(state.searchTimer);

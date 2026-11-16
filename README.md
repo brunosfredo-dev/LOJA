@@ -1,6 +1,49 @@
+# Kritikus — atualização da comunidade + Control Center (v1.1)
+
+> Esta versão foi preparada a partir do ZIP inicial do Kritikus e da estrutura pública do repositório `brunosfredo-dev/LOJA`. Não foi aplicada diretamente ao GitHub nem ao Render. Confira as diferenças em uma branch antes de mesclar.
+
+## Atualização v1.1 — 16 de novembro de 2026
+
+- **Perfil:** `display_name`, mudança de `@username` com senha atual, biografia, tema, foto, alteração de senha e saída da conta.
+- **Interações:** respostas encadeadas a comentários, notificações de resposta, modais personalizados para exclusão e denúncia.
+- **Denúncias:** agora é possível denunciar também usuários; denúncias duplicadas pendentes são bloqueadas.
+- **`/admin`:** entrada exclusivamente pela URL (sem link no menu do site), autenticação de administrador, confirmação de senha para ativar o painel por 20 minutos, proteção de rotas no servidor, CSRF e limitação de tentativas.
+- **Gestão:** dashboard com métricas e tendência dos últimos 14 dias, denúncias, pesquisa de usuários, suspensão/reativação, ocultação/restauração de posts e auditoria persistente de cada ação.
+- **Banco:** migração incremental `4e91c8c7ab02` para adicionar as novas colunas e tabela de auditoria, **sem recriar as tabelas existentes**. Comentários ocultados por moderadores permanecem no banco para preservar o histórico das denúncias.
+- **Testes:** 11 testes de integração com SQLite, verificação `alembic check` e sintaxe de JavaScript. Isso não substitui testes reais no PostgreSQL do Render ou testes manuais de interface.
+
+### Como aplicar ao repositório clonado no VS Code (Windows)
+
+1. **Faça um backup do PostgreSQL antes do deploy.** Não exporte `DATABASE_URL`, senhas ou informações privadas para o Git.
+2. No terminal do VS Code, dentro da pasta já clonada do repositório, rode `git status` e confirme que está limpo; em seguida, `git switch -c feature/kritikus-admin-comunidade`.
+3. Copie **as pastas `app/`, `frontend/`, `migrations/` e `tests/` deste ZIP para a pasta raiz do repositório**. Substitua apenas os arquivos correspondentes, sem apagar a pasta oculta `.git` e sem sobrescrever arquivos alterados pelo professor sem comparar as diferenças.
+4. Rode `git diff --stat` e `git diff`; teste localmente antes de enviar as mudanças.
+5. Teste local: `py -m venv .venv`, `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`, `.\.venv\Scripts\python.exe -m alembic upgrade head` e `.\.venv\Scripts\python.exe -m pytest -q` (sem `DATABASE_URL` de produção).
+6. Envie a branch para revisão: `git add app frontend migrations tests README.md`, `git commit -m "feat: comunidade e painel administrativo"`, `git push -u origin feature/kritikus-admin-comunidade`.
+7. Abra um **Pull Request** para a branch implantada pelo Render. Confirme os efeitos da migração no PostgreSQL, testes e permissões antes de mesclar. Dependendo da configuração, o merge pode disparar deploy automático no Render.
+
+> Dica para Windows: no PowerShell, também é válido ativar `.venv` e executar `python -m alembic upgrade head` e `python -m pytest -q`. O comando Alembic requer estar na raiz do projeto. **Jamais aponte `DATABASE_URL` de desenvolvimento para o banco de produção**.
+
+### Como acessar o painel e proteger o administrador
+
+- O endereço é **`https://SEU-SITE.onrender.com/admin`**. Essa rota não aparece no menu comum, mas a segurança **não depende da URL ser secreta**.
+- O usuário deve ter `is_admin=True` no banco. Contas comuns nunca conseguem ver dados administrativos pelo servidor.
+- Para **criar uma conta admin pela primeira vez**, configure `ADMIN_USERNAME` e `ADMIN_PASSWORD` em Render → Web Service → Environment e faça novo deploy. Em versões atualizadas, a senha inicial precisa ter **20+ caracteres**. Ela deve ser **única, aleatória e guardada em um gerenciador de senhas**; jamais inclua senhas no Git ou em prints.
+- A conta admin deve entrar com esse usuário e senha em `/admin` (ou entrar primeiro no site principal). O painel exige **confirmar a senha novamente**; a autorização administrativa expira em 20 minutos e pode ser bloqueada manualmente.
+- Uma conta admin **anterior à atualização** continua existindo. Se a senha for fraca, troque-a em **Configurações → Segurança** no Kritikus antes de utilizar o painel. `ADMIN_PASSWORD` é usada para o bootstrap inicial e não redefine automaticamente a senha de uma conta já existente.
+- Desativar a conta ou alterar a senha invalida sessões antigas conforme as regras de sessão; pedidos administrativos exigem também cabeçalho `X-CSRF-Token`.
+- Ações administrativas ficam registradas em `admin_audit` com conta que agiu, tipo, alvo, data e motivo. A interface não pode tornar usuários administradores; essa permissão só pode ser concedida em operação segura no servidor.
+- Recomenda-se acrescentar MFA externo/SSO, alertas de segurança, política de retenção de logs e backups testados antes de uma implantação de maior escala. Nenhum painel é inviolável por si só.
+
+### Monitoramento: escopo real
+
+As métricas cobrem **dados da aplicação** (membros, publicações, comentários, denúncias, curtidas, visualizações acumuladas de posts, arquivos de mídia e espaço utilizado). **Não** são telemetria de CPU, memória ou visitantes online. Para esses dados, acompanhe as métricas e logs do Render. A métrica de atividade semanal considera autores de posts/comentários, não sessões ativas.
+
+---
+
 # Kritikus — plataforma full-stack para o Render
 
-**Versão:** 1.0.0 (MVP integrado)  
+**Versão:** 1.1.0 (comunidade e painel administrativo)  
 **Interface:** HTML + CSS + JavaScript, adaptada do protótipo original  
 **API:** Python 3 + FastAPI  
 **Banco:** PostgreSQL no Render, via SQLAlchemy 2 e migrações Alembic  
@@ -16,7 +59,7 @@
 - Perfis, foto, biografia, tema claro/escuro, alteração de senha e invalidação de sessões antigas ao alterar a senha.
 - Notificações persistentes de curtidas, seguidores e comentários, com leitura.
 - Denúncias de posts e comentários e painel de moderação com fila e remoção/ocultação de conteúdo.
-- Páginas internas de configurações, ajuda/regras, salvos, notificações e moderação; interface responsiva.
+- Páginas internas de configurações, ajuda/regras, salvos e notificações; administração separada em `/admin`; interface responsiva.
 - Rate limiting por janela no banco para tentativas de login, cadastro, uploads, criação de posts/comentários, denúncias e seguir perfis.
 - Endpoint de saúde `/api/health` que verifica o banco; esquema inicial versionado e aplicado com Alembic no deploy.
 
@@ -34,14 +77,14 @@
 
 ### Administrador / moderação
 
-Antes de divulgar o site, em **Web Service > Environment**, defina:
+Se ainda não houver conta administrativa, em **Web Service > Environment**, defina:
 
 ```
 ADMIN_USERNAME=nome_seguro_de_moderador
 ADMIN_PASSWORD=uma_senha_grande_e_unica_de_12_caracteres_ou_mais
 ```
 
-Depois faça **Manual Deploy**. No boot, o sistema cria uma única conta administradora se ela ainda não existir; se o nome já existir sem privilégios, o boot falha **sem promover a conta desconhecida**. Se necessário, escolha um nome novo e redeploy. A conta entra pelo login normal e recebe a opção **Moderação** no menu. Guarde a senha fora do repositório. Depois da criação, pode remover as variáveis; a conta continuará existindo no banco.
+Depois faça **Manual Deploy**. No boot, o sistema cria uma única conta administradora se ela ainda não existir; se o nome já existir sem privilégios, o boot falha **sem promover a conta desconhecida**. Se necessário, escolha um nome novo e redeploy. A conta pode entrar pelo endereço `/admin` (sem link no menu público) e precisa revalidar a senha para desbloquear o painel. Guarde a senha fora do repositório. Depois da criação, pode remover as variáveis; a conta continuará existindo no banco.
 
 **OBS:** sem essas variáveis o site funciona, mas **nenhum usuário terá permissões administrativas** até a conta ser criada.
 
@@ -147,7 +190,7 @@ python -m pytest -q tests
 alembic check
 ```
 
-Na preparação desta entrega, **7 testes de integração passaram** com SQLite, além da validação de sintaxe do JavaScript e da migração Alembic. A implantação real no Render e os testes com PostgreSQL gerenciado **ainda precisam ser executados na sua conta**, pois o acesso ao serviço não foi fornecido. Portanto, não considere isso uma certificação de produção.
+Na atualização atual, **11 testes de integração passaram** com SQLite, além da validação de sintaxe do JavaScript e da migração Alembic. A implantação real no Render e os testes com PostgreSQL gerenciado **ainda precisam ser executados na sua conta**, pois o acesso ao serviço não foi fornecido. Portanto, não considere isso uma certificação de produção.
 
 ## 7. Antes de abrir inscrições públicas
 

@@ -11,8 +11,8 @@ def bootstrap_admin():
     username, password = os.getenv('ADMIN_USERNAME'), os.getenv('ADMIN_PASSWORD')
     if not username and not password:
         return
-    if not username or not password or len(password) < 12:
-        raise RuntimeError('ADMIN_USERNAME e ADMIN_PASSWORD devem ser definidos (senha de 12+ caracteres).')
+    if not username or not password or len(password) < 20:
+        raise RuntimeError('ADMIN_USERNAME e ADMIN_PASSWORD devem ser definidos (senha única de 20+ caracteres).')
     name = normalize_username(username)
     with SessionLocal() as db:
         existing = db.scalar(select(User).where(User.username == name))
