@@ -1,0 +1,21 @@
+KRITIKUS — AJUSTE DO ADMIN PARA MINIMO DE 8 CARACTERES
+
+Substitua somente o arquivo app/manage.py da raiz do seu repositorio
+pelo app/manage.py incluido neste ZIP.
+
+No VS Code, confira o diff e envie para sua branch Git:
+  git diff -- app/manage.py
+  git add app/manage.py
+  git commit -m "fix: reduzir senha minima do bootstrap admin para 8 caracteres"
+  git push
+
+Depois de publicar essa branch pelo fluxo de Pull Request/merge, configure
+ADMIN_USERNAME e ADMIN_PASSWORD (8 ou mais caracteres) no Render > Environment.
+O Render precisa estar executando essa versao para aceitar senha de 8 caracteres.
+
+IMPORTANTE: ADMIN_PASSWORD so cria a conta administrativa inicial. Alterar a
+variavel no Render NAO altera a senha de um administrador ja existente.
+O ajuste NAO modifica autenticação, hash, CSRF, limitacao de tentativas,
+controles de acesso ou tempo de desbloqueio do painel.
+
+Por seguranca, recomenda-se senha unica e maior que 8 caracteres.
