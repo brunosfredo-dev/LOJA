@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kritikus - Mural e Fórum</title>
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <div id="sobreposicao-menu-lateral" class="sobreposicao" onclick="fecharMenuLateral()"></div>
+    <aside id="menu-lateral" class="barra-lateral">
+        <div class="cabecalho-menu-lateral">
+            <h3>Menu</h3>
+            <span class="fechar-menu-lateral" onclick="fecharMenuLateral()">&times;</span>
+        </div>
+        <ul class="links-menu-lateral">
+            <li><a href="#" data-menu="perfil"><i class="fas fa-user"></i> Meu Perfil</a></li>
+            <li><a href="#" data-menu="salvos"><i class="fas fa-bookmark"></i> Salvos</a></li>
+            <li><a href="#" data-menu="notificacoes"><i class="fas fa-bell"></i> Notificações <span id="badge-notificacoes" class="emblema" style="display:none">0</span></a></li>
+            <hr>
+            <li><a href="#" data-menu="tema"><i class="fas fa-paint-brush"></i> Tema</a></li>
+            <li><a href="#" data-menu="configuracoes"><i class="fas fa-cog"></i> Configurações</a></li>
+            <li><a href="#" data-menu="ajuda"><i class="fas fa-question-circle"></i> Ajuda & Regras</a></li>
+            <hr>
+            <li><a href="#" data-menu="sair" class="texto-sair"><i class="fas fa-sign-out-alt"></i> Sair</a></li>
+            <li id="menu-admin" style="display:none"><a href="#" data-menu="moderacao"><i class="fas fa-shield-alt"></i> Moderação</a></li>
+        </ul>
+    </aside>
+
+    <header class="barra-navegacao">
+        <div class="nav-esquerda">
+            <div class="icone-menu" onclick="abrirMenuLateral()"><i class="fas fa-bars"></i></div>
+            <div class="logoimg">
+                <img src="/assets/logokriti.png" alt="" width="45px" style="margin-left:10px">
+            </div>
+            <div class="logotipo" onclick="mostrarInicio()">KRITIKUS</div>
+            <div class="barra-pesquisa">
+                <i class="fas fa-search"></i>
+                <input type="text" id="entrada-pesquisa" placeholder="Pesquisar artes, filmes ou autores...">
+            </div>
+        </div>
+        <div class="nav-direita">
+            <button class="btn-entrar" id="btn-entrar" onclick="abrirEntrar()">Log In</button>
+            <button class="btn-cadastrar" id="btn-cadastrar" onclick="abrirCadastrar()">Cadastre-se</button>
+            <button class="btn-criar" id="btn-criar" onclick="abrirModalCriar()"><i class="fas fa-plus-sparkles"></i> Criar Post</button>
+            <div class="icone-perfil" id="icone-perfil-id" style="display: none; align-items: center; justify-content: center; cursor: pointer;" onclick="mostrarPerfil()">
+                <img src="" id="img-perfil-nav" style="display: none; width: 28px; height: 28px; border-radius: 50%; object-fit: cover;">
+                <i class="fas fa-user-circle" id="icone-perfil-padrao-nav"></i>
+            </div>
+        </div>
+    </header>
+
+    <nav class="barra-filtros">
+        <div class="abas-principais">
+            <button class="btn-filtro ativo" id="aba-artes" onclick="trocarAba('artes')">Mural de Artes</button>
+            <button class="btn-filtro" id="aba-filmes" onclick="trocarAba('filmes')">Fórum de Filmes</button>
+        </div>
+        <div class="divisor"></div>
+        <div class="sub-etiquetas" id="etiquetas-dinamicas">
+            <button class="btn-etiqueta ativo">Tudo</button>
+            <button class="btn-etiqueta">Arte Digital</button>
+            <button class="btn-etiqueta">Personagens</button>
+            <button class="btn-etiqueta">Rascunhos</button>
+        </div>
+    </nav>
+
+    <main class="area-conteudo">
+        <div id="cabecalho-inicio">
+            <h2 id="titulo-secao">Explorar Artes</h2>
+        </div>
+        
+        <div class="grade-mosaico" id="container-feed" aria-live="polite"></div>
+        <button type="button" id="btn-carregar-mais" class="btn-entrar botao-mais" style="display:none" data-action="mais-feed">Carregar mais</button>
+        <section id="container-busca-usuarios" class="resultados-usuarios" style="display:none"></section>
+
+        <div id="container-perfil" style="display: none;">
+            <div class="cabecalho-perfil">
+                <div class="avatar-perfil" id="container-avatar-perfil" style="margin-bottom: 10px;">
+                    <img src="" id="exibicao-img-perfil" style="display: none; width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin: 0 auto;">
+                    <i class="fas fa-user-circle" id="icone-perfil-padrao" style="font-size: 80px;"></i>
+                    <div class="sobreposicao-editar" id="sobreposicao-editar-avatar" style="display: none;"><i class="fas fa-camera"></i></div>
+                </div>
+                <input type="file" id="entrada-foto-perfil" accept="image/*" style="display: none;" onchange="salvarFotoPerfil(event)">
+                
+                <h2 id="nome-usuario-perfil">@usuario</h2>
+                
+                <div class="estatisticas-perfil">
+                    <span id="seguidores-perfil"><strong>0</strong> Seguidores</span>
+                    <span id="seguindo-perfil"><strong>0</strong> Seguindo</span>
+                </div>
+
+                <div id="acoes-perfil" style="margin-top: 15px;"></div>
+            </div>
+            
+            <div class="abas-perfil" id="abas-perfil-id">
+                <button class="btn-filtro ativo" id="aba-minhas-publicacoes" onclick="trocarAbaPerfil('publicacoes')">Publicações</button>
+                <button class="btn-filtro" id="aba-salvos" onclick="trocarAbaPerfil('salvos')">Itens Salvos</button>
+            </div>
+
+            <div class="grade-mosaico" id="feed-perfil"></div>
+            <button type="button" id="btn-mais-perfil" class="btn-entrar botao-mais" style="display:none" data-action="mais-perfil">Carregar mais</button>
+        </div>
+        <section id="container-pagina" class="pagina-interna" style="display:none"></section>
+    </main>
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <div id="modal-detalhes" class="modal" role="dialog" aria-modal="true" aria-label="Detalhes da publicação">
+        <div class="conteudo-modal">
+            <span class="btn-fechar" onclick="fecharModal()">&times;</span>
+            <div class="corpo-modal" id="conteudo-corpo-modal">
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-criar" class="modal" role="dialog" aria-modal="true" aria-label="Criar publicação">
+        <div class="conteudo-modal" style="max-width: 600px;">
+            <span class="btn-fechar" onclick="fecharModalCriar()">&times;</span>
+            <div class="container-info-modal" style="padding-top: 30px;">
+                <h2 id="titulo-modal-criar" style="margin-bottom: 20px; font-size: 24px;">Criar Novo Post</h2>
+                
+                <form id="formulario-criar" onsubmit="salvarPost(event)">
+                    <div class="grupo-formulario">
+                        <label>Onde você quer postar?</label>
+                        <select id="tipo-publicacao" required>
+                            <option value="artes">Mural de Artes</option>
+                            <option value="filmes">Fórum de Filmes</option>
+                        </select>
+                    </div>
+
+                    <div class="grupo-formulario">
+                        <label>Título do Post</label>
+                        <input type="text" id="titulo-publicacao" maxlength="140" required placeholder="Ex: Meu novo rascunho de personagem">
+                    </div>
+
+                    <div class="grupo-formulario">
+                        <label>Imagem (Faça upload do seu PC OU use um link)</label>
+                        <input type="file" id="arquivo-imagem-publicacao" accept="image/*" style="margin-bottom: 5px; cursor: pointer;">
+                        
+                        <p style="text-align: center; color: var(--texto-mudo); font-size: 13px; margin: 5px 0;">— OU —</p>
+                        
+                        <input type="url" id="url-imagem-publicacao" placeholder="Cole o link direto da imagem aqui">
+                    </div>
+
+                    <div class="grupo-formulario">
+                        <label>Tags (separadas por vírgula)</label>
+                        <input type="text" id="etiquetas-publicacao" placeholder="Ex: Arte Digital, 3D, Cyberpunk">
+                    </div>
+
+                    <div class="grupo-formulario">
+                        <label>Descrição ou Crítica</label>
+                        <textarea id="descricao-publicacao" maxlength="5000" rows="4" placeholder="Fale um pouco sobre a sua arte ou deixe sua crítica sobre o filme..."></textarea>
+                    </div>
+
+                    <button type="submit" class="btn-criar" style="width: 100%; padding: 12px; font-size: 16px; margin-top: 15px;">
+                        <span id="texto-botao-publicar">Publicar no Kritikus</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-entrar" class="modal">
+        <div class="conteudo-modal" style="max-width: 400px; padding: 30px;">
+            <span class="btn-fechar" onclick="fecharModaisAutenticacao()">&times;</span>
+            <h2>Fazer Login</h2>
+            <form id="formulario-entrar" onsubmit="fazerLogin(event)" style="margin-top: 20px;">
+                <div class="grupo-formulario">
+                    <label>Seu @ (Usuário)</label>
+                    <input type="text" id="usuario-entrar" required placeholder="@seu_nome">
+                </div>
+                <div class="grupo-formulario">
+                    <label>Senha</label>
+                    <input type="password" id="senha-entrar" required placeholder="Sua senha">
+                </div>
+                <button type="submit" class="btn-criar" style="width: 100%;">Entrar</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="modal-cadastrar" class="modal">
+        <div class="conteudo-modal" style="max-width: 400px; padding: 30px;">
+            <span class="btn-fechar" onclick="fecharModaisAutenticacao()">&times;</span>
+            <h2>Criar Conta</h2>
+            <form id="formulario-cadastrar" onsubmit="criarConta(event)" style="margin-top: 20px;">
+                <div class="grupo-formulario">
+                    <label>Escolha um @ (Usuário)</label>
+                    <input type="text" id="usuario-cadastrar" required placeholder="@novo_usuario">
+                </div>
+                <div class="grupo-formulario">
+                    <label>Crie uma Senha</label>
+                    <input type="password" id="senha-cadastrar" required minlength="8" placeholder="Mínimo 8 caracteres">
+                </div>
+                <button type="submit" class="btn-cadastrar" style="width: 100%; margin-top: 10px;">Cadastrar</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="/assets/script.js"></script>
+</body>
+</html>

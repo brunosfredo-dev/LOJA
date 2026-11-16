@@ -1,0 +1,1 @@
+"""Kritikus application package."""
